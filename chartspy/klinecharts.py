@@ -11,7 +11,7 @@ KlineCharts_JS_URL: str = "https://cdn.jsdelivr.net/npm/klinecharts@latest/dist/
 
 # language=jinja2
 
-def kline_chart_segment(plot):
+def kline_chart_segment(plot, inject_js: str=None):
     parts = []
     parts.append(
         f"""var chart_{plot.plot_id} = klinecharts.init("{plot.plot_id}",
@@ -39,6 +39,8 @@ def kline_chart_segment(plot):
             chart_{plot.plot_id}.createShape({{name: 'segment',points:[{{timestamp:{seg['start_time']},value:{seg['start_price']}}},{{timestamp:{seg['end_time']},value:{seg['end_price']}}}]}},"candle_pane")
             """)
     parts.append(f"""chart_{plot.plot_id}.applyNewData(data_{plot.plot_id})""")
+    if inject_js:
+        parts.append(inject_js)
     return "\n".join(parts)
 
 
@@ -50,20 +52,25 @@ class KlineCharts(object):
     def __init__(self, df: pd.DataFrame, mas=[5, 10, 30, 60, 120, 250], main_indicators=["MA"],
                  bottom_indicators=["VOL", "MACD"], df_segments: pd.DataFrame = None,
                  extra_js: str = "", width: str = "100%",
-                 height: str = "500px"):
+                 height: str = "500px",
+                 inject_klinecharts_js: str = None):
         """
         k线图
+
         :param df: [open,high,low,close,volume,turnover,timestamp]
         :param mas: [5, 10, 30, 60, 120, 250]
         :param main_indicators: 主图显示的指标列表 MA,EMA,SMA,BOLL,SAR,BBI
-        :param bottom_indicators:副图显示指标列表 VOL,MACD,KDJ,RSI,BIAS,BBAR,CCI,DMI,CR,PSY,DMA,TRIX,OBV,VR,WR,MTM,EMV,SAR,SMA,ROC,PVT,BBI,AO
-        :param df_segments:[start_time,start_price,end_time,end_price]
+        :param bottom_indicators: 副图显示指标列表 VOL,MACD,KDJ,RSI,BIAS,BBAR,CCI,DMI,CR,PSY,DMA,TRIX,OBV,VR,WR,MTM,EMV,SAR,SMA,ROC,PVT,BBI,AO
+        :param df_segments: [start_time,start_price,end_time,end_price]
         :param extra_js:
         :param width:
         :param height:
+        :param inject_klinecharts_js: 注入 klinecharts 的定制化js代码\n
+            以'{chart}'方式引用chart，如  {chart}.createIndicator(...)
         """
         data = df.copy()
-        data['timestamp'] = (pd.to_datetime(data['timestamp']) - pd.Timedelta(hours=8)).view("i8") // 10 ** 6
+        u = None if data['timestamp'].dtype != int else 'ms' if data['timestamp'].iloc[-1] > 1e10 else 's'
+        data['timestamp'] = (pd.to_datetime(data['timestamp'], unit=u) - pd.Timedelta(hours=8)).view("i8") // 10 ** 6
         data = data.sort_values(by=['timestamp'])
         if len(mas) > 0 and "MA" not in main_indicators:
             main_indicators.append("MA")
@@ -84,10 +91,14 @@ class KlineCharts(object):
         self.plot_id = "u" + uuid.uuid4().hex
         self.js_url = KlineCharts_JS_URL
         self.extra_js = extra_js
+        self.inject_js = inject_klinecharts_js
+        if self.inject_js is not None:
+            self.inject_js = self.inject_js.replace('{chart}', f'chart_{self.plot_id}')
 
     def render_notebook(self) -> Html:
         """
         在jupyter notebook 环境输出
+
         :return:
         """
         plot = self
@@ -111,7 +122,7 @@ class KlineCharts(object):
           {plot.extra_js}
           var data_{plot.plot_id} = {plot.data}
           require(['klinecharts'], function (klinecharts) {{
-            """ + kline_chart_segment(plot) + f"""
+            """ + kline_chart_segment(plot, self.inject_js) + f"""
           }});
         </script>
         
@@ -121,6 +132,7 @@ class KlineCharts(object):
     def render_jupyterlab(self) -> Html:
         """
         在jupyterlab 环境输出
+
         :return:
         """
         plot = self
@@ -143,7 +155,7 @@ class KlineCharts(object):
               script.src = "{plot.js_url}";
               document.head.appendChild(script);
             }}).then(() => {{
-              """ + kline_chart_segment(plot) + f"""
+              """ + kline_chart_segment(plot, self.inject_js) + f"""
             }});
             </script>
             """
@@ -152,6 +164,7 @@ class KlineCharts(object):
     def render_html(self) -> str:
         """
         渲染html字符串，可以用于 streamlit
+
         :return:
         """
         plot = self
@@ -173,7 +186,8 @@ class KlineCharts(object):
           <div id="{plot.plot_id}" ></div>
           <script>
              {plot.extra_js}
-        """ + kline_chart_segment(plot) + f"""
+             var data_{plot.plot_id} = {plot.data}
+        """ + kline_chart_segment(plot, self.inject_js) + f"""
 
                   </script>
                 </body>
@@ -184,6 +198,7 @@ class KlineCharts(object):
     def render_html_fragment(self):
         """
         渲染html 片段，方便一个网页输出多个图表
+
         :return:
         """
         plot = self
@@ -199,7 +214,7 @@ class KlineCharts(object):
          <div id="{plot.plot_id}" ></div>
           <script>
             {plot.extra_js}
-        """ + kline_chart_segment(plot) + f"""
+        """ + kline_chart_segment(plot, self.inject_js) + f"""
           </script>
         </div>
         """
@@ -208,6 +223,7 @@ class KlineCharts(object):
     def _repr_html_(self):
         """
         jupyter 环境，直接输出
+
         :return:
         """
         plot = self
@@ -229,7 +245,7 @@ class KlineCharts(object):
                 }}
               }});
               require(['klinecharts'], function (klinecharts) {{
-                """ + kline_chart_segment(plot) + f"""
+                """ + kline_chart_segment(plot, self.inject_js) + f"""
              }});
              }}else{{
                new Promise(function(resolve, reject) {{
@@ -239,7 +255,7 @@ class KlineCharts(object):
                  script.src = "{plot.js_url}";
                  document.head.appendChild(script);
                }}).then(() => {{
-                 """ + kline_chart_segment(plot) + f"""
+                 """ + kline_chart_segment(plot, self.inject_js) + f"""
                }});
              }}
         

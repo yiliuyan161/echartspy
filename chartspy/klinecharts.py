@@ -91,7 +91,9 @@ class KlineCharts(object):
         self.plot_id = "u" + uuid.uuid4().hex
         self.js_url = KlineCharts_JS_URL
         self.extra_js = extra_js
-        self.inject_js = inject_klinecharts_js.replace('{chart}', f'chart_{self.plot_id}')
+        self.inject_js = inject_klinecharts_js
+        if self.inject_js is not None:
+            self.inject_js = self.inject_js.replace('{chart}', f'chart_{self.plot_id}')
 
     def render_notebook(self) -> Html:
         """
@@ -184,6 +186,7 @@ class KlineCharts(object):
           <div id="{plot.plot_id}" ></div>
           <script>
              {plot.extra_js}
+             var data_{plot.plot_id} = {plot.data}
         """ + kline_chart_segment(plot, self.inject_js) + f"""
 
                   </script>
